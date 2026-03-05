@@ -60,10 +60,12 @@ def recognize_face():
         for (x,y,w,h) in faces:
 
             face = gray[y:y+h, x:x+w]
+            face = cv2.resize(face,(200,200))
 
             label, confidence = recognizer.predict(face)
+            print("Confidence:", confidence)
 
-            if confidence < 70:
+            if confidence < 45:
 
                 cam.release()
                 cv2.destroyAllWindows()
@@ -227,14 +229,13 @@ print("Starting Zenith Vision System...")
 
 person = recognize_face()
 
+
 if person == "yoghesh":
 
     speak("Welcome back Yoghesh")
 
-    start_interface()
+    os.system("python zenith_hud.py")
 
 else:
 
     speak("Unauthorized user detected. Shutting down system.")
-
-    sys.exit()
