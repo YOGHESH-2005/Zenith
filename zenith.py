@@ -1,37 +1,102 @@
 import cv2
-import customtkinter as ctk
-import speech_recognition as sr
 import sounddevice as sd
-import scipy.io.wavfile as wav
-import asyncio
-import edge_tts
-from playsound import playsound
 import os
 import datetime
-import sys
+import queue
+import json
+from vosk import Model, KaldiRecognizer
+import pyttsx3
 
 
 # =========================
 # VOICE SYSTEM
 # =========================
 
-async def speak_async(text):
+engine = pyttsx3.init('sapi5')
 
-    communicate = edge_tts.Communicate(
-        text,
-        voice="en-GB-RyanNeural"
-    )
-
-    await communicate.save("voice.mp3")
-
-    playsound("voice.mp3")
-
-    if os.path.exists("voice.mp3"):
-        os.remove("voice.mp3")
+voices = engine.getProperty('voices')
+engine.setProperty('voice', voices[0].id)   # male voice
+engine.setProperty('rate', 170)
 
 
 def speak(text):
-    asyncio.run(speak_async(text))
+
+    print("Zenith:", text)
+
+    engine.say(text)
+    engine.runAndWait()
+
+
+# =========================
+# LOAD VOSK MODEL
+# =========================
+
+print("Loading voice recognition model...")
+
+model = Model("vosk-model-small-en-us-0.15")
+recognizer = KaldiRecognizer(model, 16000)
+
+
+# =========================
+# LISTEN SYSTEM
+# =========================
+
+def listen():
+
+    q = queue.Queue()
+
+    def callback(indata, frames, time, status):
+        q.put(bytes(indata))
+
+    with sd.RawInputStream(
+        samplerate=16000,
+        blocksize=8000,
+        dtype='int16',
+        channels=1,
+        callback=callback
+    ):
+
+        while True:
+
+            data = q.get()
+
+            if recognizer.AcceptWaveform(data):
+
+                result = json.loads(recognizer.Result())
+
+                command = result.get("text")
+
+                if command != "":
+                    print("You said:", command)
+                    return command
+
+
+# =========================
+# WAKE WORD SYSTEM
+# =========================
+
+def wake_word():
+
+    while True:
+
+        command = listen().lower()
+
+        if "zenith" in command:
+
+            speak("Yes Sir")
+
+            # conversation mode
+            while True:
+
+                command = listen().lower()
+
+                if "stop listening" in command or "go to sleep" in command:
+
+                    speak("Going back to standby")
+
+                    break
+
+                execute_command(command)
 
 
 # =========================
@@ -40,41 +105,44 @@ def speak(text):
 
 def recognize_face():
 
-    recognizer = cv2.face.LBPHFaceRecognizer_create()
-    recognizer.read("face_model.yml")
+    recognizer_face = cv2.face.LBPHFaceRecognizer_create()
+    recognizer_face.read("face_model.yml")
 
     face_cascade = cv2.CascadeClassifier(
         cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     )
 
-    cam = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(0)
 
     while True:
 
-        ret, frame = cam.read()
+        ret, frame = cap.read()
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        faces = face_cascade.detectMultiScale(gray,1.3,5)
+        gray = cv2.equalizeHist(gray)
 
-        for (x,y,w,h) in faces:
+        faces = face_cascade.detectMultiScale(gray, 1.3, 5)
+
+        for (x, y, w, h) in faces:
 
             face = gray[y:y+h, x:x+w]
-            face = cv2.resize(face,(200,200))
+            face = cv2.resize(face, (200, 200))
 
-            label, confidence = recognizer.predict(face)
+            label, confidence = recognizer_face.predict(face)
+
             print("Confidence:", confidence)
 
-            if confidence < 45:
+            if confidence < 40:
 
-                cam.release()
+                cap.release()
                 cv2.destroyAllWindows()
 
                 return "yoghesh"
 
             else:
 
-                cam.release()
+                cap.release()
                 cv2.destroyAllWindows()
 
                 return "unknown"
@@ -84,52 +152,10 @@ def recognize_face():
         if cv2.waitKey(1) == 27:
             break
 
-    cam.release()
+    cap.release()
     cv2.destroyAllWindows()
 
     return "unknown"
-
-
-# =========================
-# AUDIO RECORDING
-# =========================
-
-def record_audio(duration=5, fs=44100):
-
-    recording = sd.rec(
-        int(duration * fs),
-        samplerate=fs,
-        channels=1,
-        dtype="int16"
-    )
-
-    sd.wait()
-
-    wav.write("input.wav", fs, recording)
-
-    return "input.wav"
-
-
-def listen():
-
-    r = sr.Recognizer()
-
-    audio_file = record_audio()
-
-    with sr.AudioFile(audio_file) as source:
-        audio = r.record(source)
-
-    try:
-
-        command = r.recognize_google(audio, language="en-IN").lower()
-
-        output_label.configure(text="Command: " + command)
-
-        execute_command(command)
-
-    except:
-
-        output_label.configure(text="Could not understand")
 
 
 # =========================
@@ -141,14 +167,12 @@ def execute_command(command):
     if "hello" in command:
 
         speak("Hello Yoghesh")
-        output_label.configure(text="Response: Hello Yoghesh")
 
     elif "time" in command:
 
         now = datetime.datetime.now().strftime("%I:%M %p")
 
-        speak("The current time is " + now)
-        output_label.configure(text="Response: Time is " + now)
+        speak("The time is " + now)
 
     elif "open youtube" in command:
 
@@ -156,69 +180,15 @@ def execute_command(command):
 
         os.system("start https://www.youtube.com")
 
-        output_label.configure(text="Response: Opening YouTube")
-
     elif "open notepad" in command:
 
         speak("Opening Notepad")
 
         os.system("notepad")
 
-        output_label.configure(text="Response: Opening Notepad")
-
     else:
 
         speak("I am still learning that command")
-        output_label.configure(text="Unknown command")
-
-
-# =========================
-# ZENITH GUI
-# =========================
-
-def start_interface():
-
-    global output_label
-
-    ctk.set_appearance_mode("dark")
-
-    app = ctk.CTk()
-
-    app.title("ZENITH AI")
-
-    app.geometry("500x400")
-
-
-    title = ctk.CTkLabel(
-        app,
-        text="ZENITH AI",
-        font=("Arial",30)
-    )
-
-    title.pack(pady=20)
-
-
-    output_label = ctk.CTkLabel(
-        app,
-        text="System Ready",
-        font=("Arial",18)
-    )
-
-    output_label.pack(pady=20)
-
-
-    button = ctk.CTkButton(
-        app,
-        text="🎤 Speak Command",
-        command=listen,
-        height=40,
-        width=200
-    )
-
-    button.pack(pady=20)
-
-
-    app.mainloop()
 
 
 # =========================
@@ -229,12 +199,11 @@ print("Starting Zenith Vision System...")
 
 person = recognize_face()
 
-
 if person == "yoghesh":
 
-    speak("Welcome back Yoghesh")
+    speak("Welcome back Sir")
 
-    os.system("python zenith_hud.py")
+    wake_word()
 
 else:
 
